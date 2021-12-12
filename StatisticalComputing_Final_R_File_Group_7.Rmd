@@ -1,0 +1,167 @@
+#Install all the libraries
+
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("hrbrthemes")
+install.packages("sqldf")
+install.packages("randomForest")
+
+#Importing all the libraries
+
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(hrbrthemes)
+library(sqldf)
+library(randomForest)
+
+#Import data in the R session
+
+ipl_data <- read.csv("/Users/HP/Downloads/SAS_Final_Project/IPL_Data.csv")
+str(ipl_data)
+head(ipl_data)
+tail(ipl_data)
+
+ipl_data <- select (ipl_data,-c(reserve_umpire,referee,tv_umpire,umpire2,umpire1,highlights,away_key_bowler,away_key_batsman,away_playx1,home_playx1,home_key_bowler,home_key_batsman))
+
+#Uniform Team Names
+
+team_short_names <- list("Kolkata Knight Riders" = "KKR","Delhi Capitals"="DC","Chennai Super Kings"= "CSK","Rising Pune Supergiant"="RPS","Rajasthan Royals"="RR","Gujarat Lions"="GL","Royal Challengers Bangalore"="RCB","Rising Pune Supergiants" = "RPS","Deccan Chargers"="SRH","Kings XI Punjab" = "KXIP","Sunrisers Hyderabad"="SRH","Delhi Daredevils" = "DC","Mumbai Indians"="MI","Kochi Tuskers Kerala"="KTK","Pune Warriors"="PWI")
+
+
+for ( i in seq(1,length(team_short_names),1)){
+  ipl_data <- ipl_data %>% mutate_all(funs(str_replace(.,names(team_short_names)[i],team_short_names[[names(team_short_names)[i]]])))
+}
+
+#total entries
+length(ipl_data$id)
+
+#Num of seasons
+length(unique(ipl_data$season))
+
+#Num of matches in each ground
+ggplot(ipl_data,aes(venue_name, rm.na=T)) + geom_bar(fill="Orange") + theme(axis.text.x = element_text(angle = 65, hjust = 1))+ ylab("Total Matches") + xlab("Ground Name")
+
+#Most matches in a season
+match_count_in_season <- ipl_data %>% group_by(season) %>% summarise(count=n())
+match_count_in_season
+
+#plot
+ggplot(data=match_count_in_season, aes(x=season, y=count, group=1)) + geom_line(color="gray", size=1.5) + geom_point(shape=21, color="black", fill="#69b3a2", size=3) + ylab("Total Matches") + xlab("Season") + theme_ipsum() + ggtitle("Matches Per Season") + geom_text(aes(label=count,vjust=-0.6))
+
+#Dropping no results
+ipl_matches_with_result <- ipl_data[!(ipl_data$result == "No result" | ipl_data$winner == "No Result"),]
+
+#Top Victories by Runs
+Winner_by_runs <- subset(ipl_matches_with_result,select=c("season", "name","winner","result","home_runs","away_runs"))
+Winner_by_runs <- Winner_by_runs %>% mutate(runs_margin = abs(as.numeric(Winner_by_runs$home_runs) - as.numeric(Winner_by_runs$away_runs)))
+
+Winner_by_runs <- Winner_by_runs[order(Winner_by_runs$runs_margin, decreasing = TRUE),]
+head(Winner_by_runs,10)
+
+#Top Victories by Wickets
+Winner_by_Wickets <- subset(ipl_matches_with_result,select=c("season", "name","winner","result","home_wickets","away_wickets"))
+Winner_by_Wickets <- Winner_by_Wickets %>% mutate(wickets_margin = abs(as.numeric(Winner_by_Wickets$home_wickets) - as.numeric(Winner_by_Wickets$away_wickets)))
+
+Winner_by_Wickets <- Winner_by_Wickets[order(Winner_by_Wickets$wickets_margin, decreasing = TRUE),]
+head(Winner_by_Wickets,10)
+
+#Most Successfull Team Graph
+
+ggplot(ipl_matches_with_result, aes(winner,fill= winner,rm.na=T)) +geom_bar() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))+ 
+  ylab("Matches Won") + xlab("Winner Team") +
+  guides(fill=FALSE) + ggtitle("Most Successfull Team")
+
+#Most Successfull Team Table
+Top_3_Teams <- ipl_matches_with_result %>% group_by(winner) %>% summarise(wins = n())  %>% arrange(desc(wins)) %>% top_n(n=3)
+
+#Most Successfull Player Table
+Top_5_Players <- ipl_matches_with_result %>% group_by(pom) %>% summarise(Total_Awards = n())  %>% arrange(desc(pom)) %>% top_n(n=5)
+
+#Creating a new Table
+
+home_team_match_count <- ipl_matches_with_result %>% group_by(home_team) %>% summarise(count = n()) %>% arrange(home_team)
+
+away_team_match_count <- ipl_matches_with_result %>% group_by(away_team) %>% summarise(count = n()) %>% arrange(away_team)
+
+toss_winner <- ipl_matches_with_result %>% group_by(toss_won) %>% summarise(count = n()) %>% arrange(toss_won)
+
+match_winner <- ipl_matches_with_result %>% group_by(winner) %>% summarise(count = n()) %>% arrange(winner)
+
+#Joining tables using SQL
+
+winning_stats <- sqldf("select a.home_team, a.count + b.count as Matches_Played, c.count as Toss_Won, d.count as Matches_Won, ((a.count + b.count) - d.count) as Matches_Lost FROM home_team_match_count a INNER JOIN away_team_match_count b ON a.home_team = b.away_team INNER JOIN toss_winner c ON a.home_team = c.toss_won INNER JOIN match_winner d ON c.toss_won = d.winner")
+
+winning_stats <- winning_stats %>% mutate(winning_percent = ((winning_stats$Matches_Won / winning_stats$Matches_Played)*100.0))
+
+winning_stats
+
+#Winning Percentage bubble plot
+ggplot(winning_stats, aes(x = home_team, y = winning_percent  , color = home_team , size = winning_percent)) +
+  geom_point() + scale_size_continuous(range=c(4,14))
+
+#Final Matches of Every Season
+final_each_season <- ipl_matches_with_result %>% group_by(season) %>% summarise(final_date = max(start_date)) %>% arrange(season)
+final_each_season
+
+#Extract Winners of Every Season
+winner_each_season <- sqldf("select a.season, a.winner from ipl_matches_with_result a inner join final_each_season b on a.start_date=b.final_date")
+
+winner_each_season
+
+#Top 2 Teams by title winners
+top_2_Winning_teams <- winner_each_season %>% group_by(winner) %>% summarise(no_of_titles = n())  %>% arrange(desc(no_of_titles)) %>% top_n(n=2)
+
+top_2_Winning_teams
+
+#Toss winner chances
+toss_win_advantage <- sqldf("SELECT count(winner) as TossWinMatchWin, (SELECT COUNT(*) FROM ipl_matches_with_result) as TotalMatches, ((cast(count(winner) as real)/(SELECT COUNT(*) FROM ipl_matches_with_result))*100) AS WinProbability FROM ipl_matches_with_result WHERE toss_won == winner")
+
+toss_win_advantage
+
+#Plot Winn Probability Graph
+
+win_prob <- ipl_matches_with_result %>% select(toss_won,winner)
+win_prob$match_toss_won<-ifelse(as.character(ipl_matches_with_result$toss_won)==as.character(ipl_matches_with_result$winner),"Won","Lost")
+
+ggplot(win_prob[which(!is.na(win_prob$match_toss_won)),],aes(match_toss_won, fill = match_toss_won))+ 
+  geom_bar()+ xlab("Toss") +ylab("Number of matches won")+ ggtitle("How much of a advantage is winning the toss")+ coord_flip() + scale_fill_manual(values = c("yellow","green"))
+
+
+#Team with most Super Over
+best_super_over <- sqldf("SELECT winner,count(super_over) as super_overs_played FROM ipl_matches_with_result WHERE super_over = 'True' GROUP BY winner")
+
+ggplot(best_super_over, aes(x=super_overs_played, y=winner)) + geom_col(fill="maroon") + xlab("Number of Super Overs Played") + ylab("Team") + ggtitle("Super Over By Each Team") + coord_cartesian( xlim = c(0, 3))
+
+#Random Forrest
+
+matches_played <- ipl_matches_with_result %>% select(home_team,away_team,decision,toss_won,venue_id,winner)
+
+matches_played$home_team <- as.numeric(as.factor(matches_played$home_team))
+matches_played$away_team <- as.numeric(as.factor(matches_played$away_team))
+
+matches_played$decision <- as.numeric(as.factor(matches_played$decision))
+matches_played$toss_won <- as.numeric(as.factor(matches_played$toss_won))
+matches_played$venue_id <- as.numeric(as.factor(matches_played$venue_id))
+matches_played$winner <- as.numeric(as.factor(matches_played$winner))
+
+str(matches_played)
+
+set.seed(123)
+train_distribution <- sample(nrow(matches_played), .70*nrow(matches_played))
+
+matches_played_train <- matches_played[train_distribution,]
+matches_played_test <- matches_played[-train_distribution,]
+
+result <- randomForest(winner ~ home_team + away_team + venue_id + toss_won + decision ,data=matches_played_train)
+result
+
+summary(result)
+
+pred = predict(result, matches_played_test, type ="response")
+out = table(matches_played_test$winner, pred)
+out
+mean(matches_played_test$winner == pred)
+
+
